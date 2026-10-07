@@ -1,0 +1,21 @@
+# Maintainer: openOODA-tools <ops@openooda.org>
+pkgname=oofilter-bin
+_pkgname=oofilter
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Evaluates boolean logic expressions against structured stream line objects."
+arch=('x86_64')
+url="https://github.com/openOODA-tools/oofilter"
+license=('Apache-2.0')
+depends=('glibc')
+provides=('oofilter')
+conflicts=('oofilter')
+source_x86_64=("${url}/releases/download/v${pkgver}/oofilter-linux-x86_64"
+               "uninstall.sh::https://raw.githubusercontent.com/openOODA-tools/${_pkgname}/v${pkgver}/uninstall.sh")
+sha256sums_x86_64=('SKIP'
+                   'SKIP')
+
+package() {
+    install -Dm755 "${srcdir}/oofilter-linux-x86_64" "${pkgdir}/usr/bin/oofilter"
+    install -Dm755 uninstall.sh "${pkgdir}/usr/bin/oofilter-uninstall"
+}
