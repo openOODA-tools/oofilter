@@ -1,0 +1,191 @@
+// # Predicate AST Specification
+//
+// Logline: Abstract Syntax Tree representation and recursive parser for boolean expressions.
+//
+// Setup: Pure memory AST arena construction validating syntactic predicate trees.
+//
+// Beats:
+//   1. Define AST node data types and arena index references.
+//   2. Parse primary terms, grouping parentheses, and field selectors.
+//   3. Parse relational comparison operations (==, !=, <, <=, >, >=, =~, contains).
+//   4. Parse logical conjunction (&&), disjunction (||), and negation (!).
+
+import "core/predicate_token.oo";
+
+pub type ExprNode = struct {
+    kind: Int,
+    op: Int,
+    field_idx: Int,
+    str_val: String,
+    num_val: Int,
+    left_idx: Int,
+    right_idx: Int
+};
+
+pub fn node_true() -> Int { return 1; }
+pub fn node_false() -> Int { return 2; }
+pub fn node_and() -> Int { return 3; }
+pub fn node_or() -> Int { return 4; }
+pub fn node_not() -> Int { return 5; }
+pub fn node_cmp() -> Int { return 6; }
+pub fn node_field() -> Int { return 7; }
+pub fn node_str() -> Int { return 8; }
+pub fn node_num() -> Int { return 9; }
+pub fn node_nr() -> Int { return 10; }
+
+pub type ExprAst = struct {
+    arena: List[ExprNode],
+    root_idx: Int,
+    is_valid: Bool,
+    err_msg: String
+};
+
+pub fn make_ast_node(k: Int, op: Int, f_idx: Int, s: String, n: Int, l: Int, r: Int) -> ExprNode {
+    return ExprNode {
+        kind: k,
+        op: op,
+        field_idx: f_idx,
+        str_val: s,
+        num_val: n,
+        left_idx: l,
+        right_idx: r
+    };
+}
+
+fn add_node(arena: List[ExprNode], node: ExprNode) -> List[ExprNode] {
+    return list_push(arena, node);
+}
+
+fn get_last_idx(arena: List[ExprNode]) -> Int {
+    return list_len(arena) - 1;
+}
+
+pub fn parse_expression_tokens(tokens: List[Token]) -> ExprAst {
+    let mut arena: List[ExprNode] = list_new();
+    let n_tokens: Int = list_len(tokens);
+    if n_tokens == 0 || (n_tokens == 1 && list_get(tokens, 0).kind == tok_eof()) {
+        arena = add_node(arena, make_ast_node(node_true(), 0, 0, "", 0, -1, -1));
+        return ExprAst { arena: arena, root_idx: 0, is_valid: true, err_msg: "" };
+    }
+
+    let mut pos: Int = 0;
+    let res: ExprAst = parse_or_expr(tokens, pos, arena);
+    return res;
+}
+
+fn parse_primary(tokens: List[Token], pos: Int, mut arena: List[ExprNode]) -> ExprAst {
+    let t: Token = list_get(tokens, pos);
+    if t.kind == tok_lparen() {
+        let sub: ExprAst = parse_or_expr(tokens, pos + 1, arena);
+        let mut next_pos: Int = sub.root_idx; // temporary storage
+        arena = sub.arena;
+        let mut p: Int = pos + 1;
+        while p < list_len(tokens) && list_get(tokens, p).kind != tok_rparen() && list_get(tokens, p).kind != tok_eof() {
+            p = p + 1;
+        }
+        if p < list_len(tokens) && list_get(tokens, p).kind == tok_rparen() {
+            p = p + 1;
+        }
+        return ExprAst { arena: arena, root_idx: next_pos, is_valid: sub.is_valid, err_msg: "" };
+    }
+    if t.kind == tok_field() {
+        arena = add_node(arena, make_ast_node(node_field(), 0, t.num_val, t.text, 0, -1, -1));
+        return ExprAst { arena: arena, root_idx: get_last_idx(arena), is_valid: true, err_msg: "" };
+    }
+    if t.kind == tok_string() {
+        arena = add_node(arena, make_ast_node(node_str(), 0, 0, t.text, 0, -1, -1));
+        return ExprAst { arena: arena, root_idx: get_last_idx(arena), is_valid: true, err_msg: "" };
+    }
+    if t.kind == tok_number() {
+        arena = add_node(arena, make_ast_node(node_num(), 0, 0, t.text, t.num_val, -1, -1));
+        return ExprAst { arena: arena, root_idx: get_last_idx(arena), is_valid: true, err_msg: "" };
+    }
+    if t.kind == tok_nr() {
+        arena = add_node(arena, make_ast_node(node_nr(), 0, 0, t.text, 0, -1, -1));
+        return ExprAst { arena: arena, root_idx: get_last_idx(arena), is_valid: true, err_msg: "" };
+    }
+    if t.kind == tok_ident() {
+        arena = add_node(arena, make_ast_node(node_str(), 0, 0, t.text, 0, -1, -1));
+        return ExprAst { arena: arena, root_idx: get_last_idx(arena), is_valid: true, err_msg: "" };
+    }
+
+    arena = add_node(arena, make_ast_node(node_true(), 0, 0, "", 0, -1, -1));
+    return ExprAst { arena: arena, root_idx: get_last_idx(arena), is_valid: true, err_msg: "" };
+}
+
+fn is_cmp_op(k: Int) -> Bool {
+    return k == tok_eq() || k == tok_ne() || k == tok_lt() || k == tok_le()
+        || k == tok_gt() || k == tok_ge() || k == tok_match() || k == tok_not_match()
+        || k == tok_contains();
+}
+
+fn parse_cmp_expr(tokens: List[Token], pos: Int, mut arena: List[ExprNode]) -> ExprAst {
+    let left_ast: ExprAst = parse_primary(tokens, pos, arena);
+    arena = left_ast.arena;
+    let left_idx: Int = left_ast.root_idx;
+
+    if pos + 1 < list_len(tokens) && is_cmp_op(list_get(tokens, pos + 1).kind) {
+        let op_tok: Token = list_get(tokens, pos + 1);
+        let right_ast: ExprAst = parse_primary(tokens, pos + 2, arena);
+        arena = right_ast.arena;
+        let right_idx: Int = right_ast.root_idx;
+
+        arena = add_node(arena, make_ast_node(node_cmp(), op_tok.kind, 0, op_tok.text, 0, left_idx, right_idx));
+        return ExprAst { arena: arena, root_idx: get_last_idx(arena), is_valid: true, err_msg: "" };
+    }
+
+    return left_ast;
+}
+
+fn parse_not_expr(tokens: List[Token], pos: Int, mut arena: List[ExprNode]) -> ExprAst {
+    let t: Token = list_get(tokens, pos);
+    if t.kind == tok_not() {
+        let child_ast: ExprAst = parse_cmp_expr(tokens, pos + 1, arena);
+        arena = child_ast.arena;
+        let child_idx: Int = child_ast.root_idx;
+        arena = add_node(arena, make_ast_node(node_not(), 0, 0, "!", 0, child_idx, -1));
+        return ExprAst { arena: arena, root_idx: get_last_idx(arena), is_valid: true, err_msg: "" };
+    }
+    return parse_cmp_expr(tokens, pos, arena);
+}
+
+fn parse_and_expr(tokens: List[Token], pos: Int, mut arena: List[ExprNode]) -> ExprAst {
+    let left_ast: ExprAst = parse_not_expr(tokens, pos, arena);
+    arena = left_ast.arena;
+    let mut left_idx: Int = left_ast.root_idx;
+
+    let mut cur: Int = pos;
+    // scan forward to find if there is an and token
+    while cur < list_len(tokens) {
+        if list_get(tokens, cur).kind == tok_and() && cur + 1 < list_len(tokens) {
+            let right_ast: ExprAst = parse_not_expr(tokens, cur + 1, arena);
+            arena = right_ast.arena;
+            let right_idx: Int = right_ast.root_idx;
+            arena = add_node(arena, make_ast_node(node_and(), 0, 0, "&&", 0, left_idx, right_idx));
+            left_idx = get_last_idx(arena);
+        }
+        cur = cur + 1;
+    }
+
+    return ExprAst { arena: arena, root_idx: left_idx, is_valid: true, err_msg: "" };
+}
+
+fn parse_or_expr(tokens: List[Token], pos: Int, mut arena: List[ExprNode]) -> ExprAst {
+    let left_ast: ExprAst = parse_and_expr(tokens, pos, arena);
+    arena = left_ast.arena;
+    let mut left_idx: Int = left_ast.root_idx;
+
+    let mut cur: Int = pos;
+    while cur < list_len(tokens) {
+        if list_get(tokens, cur).kind == tok_or() && cur + 1 < list_len(tokens) {
+            let right_ast: ExprAst = parse_and_expr(tokens, cur + 1, arena);
+            arena = right_ast.arena;
+            let right_idx: Int = right_ast.root_idx;
+            arena = add_node(arena, make_ast_node(node_or(), 0, 0, "||", 0, left_idx, right_idx));
+            left_idx = get_last_idx(arena);
+        }
+        cur = cur + 1;
+    }
+
+    return ExprAst { arena: arena, root_idx: left_idx, is_valid: true, err_msg: "" };
+}

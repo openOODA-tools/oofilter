@@ -1,0 +1,104 @@
+// # JSON Field Extractor
+//
+// Logline: Extracts string, boolean, and integer fields from JSON-RPC frames without ambient authority.
+//
+// Setup: Pure string scanning implementation providing negative-trust field validation.
+//
+// Beats:
+//   1. Search for key string pattern with colon separator.
+//   2. Extract and unescape string token literals.
+//   3. Parse boolean true/false values.
+//   4. Parse integer numeric literals.
+
+fn find_field_start(raw: String, key: String) -> Int {
+    let needle: String = "\"" + key + "\"";
+    let n_len: Int = chars_len(needle);
+    let raw_len: Int = chars_len(raw);
+    let mut i: Int = 0;
+
+    while i + n_len <= raw_len {
+        if str_slice(raw, i, i + n_len) == needle {
+            let mut j: Int = i + n_len;
+            while j < raw_len && (byte_at(raw, j) == 32 || byte_at(raw, j) == 9) {
+                j = j + 1;
+            }
+            if j < raw_len && byte_at(raw, j) == 58 { // ':'
+                j = j + 1;
+                while j < raw_len && (byte_at(raw, j) == 32 || byte_at(raw, j) == 9) {
+                    j = j + 1;
+                }
+                return j;
+            }
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+pub fn json_extract_str_field(raw: String, key: String) -> String {
+    let start: Int = find_field_start(raw, key);
+    let raw_len: Int = chars_len(raw);
+    if start < 0 || start >= raw_len || byte_at(raw, start) != 34 {
+        return "";
+    }
+
+    let mut j: Int = start + 1;
+    let mut out: String = "";
+    while j < raw_len {
+        let b: Int = byte_at(raw, j);
+        if b == 92 && j + 1 < raw_len { // escape '\'
+            let nb: Int = byte_at(raw, j + 1);
+            if nb == 34 { out = out + "\""; }
+            else if nb == 92 { out = out + "\\"; }
+            else if nb == 110 { out = out + "\n"; }
+            else if nb == 116 { out = out + "\t"; }
+            else { out = out + char_at(raw, j + 1); }
+            j = j + 2;
+        } else if b == 34 {
+            return out;
+        } else {
+            out = out + char_at(raw, j);
+            j = j + 1;
+        }
+    }
+    return out;
+}
+
+pub fn json_extract_bool_field(raw: String, key: String, default_val: Bool) -> Bool {
+    let start: Int = find_field_start(raw, key);
+    let raw_len: Int = chars_len(raw);
+    if start < 0 || start >= raw_len {
+        return default_val;
+    }
+    if start + 4 <= raw_len && str_slice(raw, start, start + 4) == "true" {
+        return true;
+    }
+    if start + 5 <= raw_len && str_slice(raw, start, start + 5) == "false" {
+        return false;
+    }
+    return default_val;
+}
+
+pub fn json_extract_int_field(raw: String, key: String, default_val: Int) -> Int {
+    let start: Int = find_field_start(raw, key);
+    let raw_len: Int = chars_len(raw);
+    if start < 0 || start >= raw_len {
+        return default_val;
+    }
+
+    let mut j: Int = start;
+    let is_neg: Bool = if byte_at(raw, j) == 45 { j = j + 1; true } else { false };
+    let mut val: Int = 0;
+    let mut found: Bool = false;
+
+    while j < raw_len && byte_at(raw, j) >= 48 && byte_at(raw, j) <= 57 {
+        val = val * 10 + (byte_at(raw, j) - 48);
+        found = true;
+        j = j + 1;
+    }
+
+    if !found {
+        return default_val;
+    }
+    return if is_neg { 0 - val } else { val };
+}

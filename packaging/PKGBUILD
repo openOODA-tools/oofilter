@@ -1,9 +1,9 @@
 # Maintainer: openOODA-tools <ops@openooda.org>
 pkgname=oofilter-bin
 _pkgname=oofilter
-pkgver=0.1.0
+pkgver=0.2.0
 pkgrel=1
-pkgdesc="Evaluates boolean logic expressions against structured stream line objects."
+pkgdesc="Sovereign boolean logic evaluator and stream predicate filter in pure openOODA."
 arch=('x86_64')
 url="https://github.com/openOODA-tools/oofilter"
 license=('Apache-2.0')

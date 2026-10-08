@@ -1,0 +1,113 @@
+// # Render JSON Subsystem
+//
+// Logline: Serializes stream match records, predicate AST summaries, and operators to JSON.
+//
+// Setup: Pure string builder creating valid RFC 8259 JSON structures for AI agents.
+//
+// Beats:
+//   1. Escape control bytes and quote delimiters in string values.
+//   2. Format single and multiline match records as JSON objects.
+//   3. Render predicate AST structures and operator schemas.
+
+import "core/predicate_ast.oo";
+import "core/stream_filter.oo";
+
+fn json_str_escape(s: String) -> String {
+    let n: Int = chars_len(s);
+    let mut out: String = "";
+    let mut i: Int = 0;
+    while i < n {
+        let b: Int = byte_at(s, i);
+        if b == 34 { // quote "
+            out = out + "\\\"";
+        } else if b == 92 { // backslash \
+            out = out + "\\\\";
+        } else if b == 10 { // newline \n
+            out = out + "\\n";
+        } else if b == 9 { // tab \t
+            out = out + "\\t";
+        } else if b == 13 { // carriage return \r
+            out = out + "\\r";
+        } else {
+            out = out + char_at(s, i);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+pub fn render_match_single_json(m: FilterMatch) -> String {
+    let mut out: String = "{\n"
+        + "  \"line_num\": " + m.line_num.to_string() + ",\n"
+        + "  \"line\": \"" + json_str_escape(m.line) + "\",\n"
+        + "  \"matched\": " + (if m.matched { "true" } else { "false" }) + ",\n"
+        + "  \"fields\": [";
+
+    let n_fields: Int = list_len(m.fields);
+    let mut i: Int = 0;
+    while i < n_fields {
+        out = out + "\"" + json_str_escape(list_get(m.fields, i)) + "\"";
+        if i + 1 < n_fields {
+            out = out + ", ";
+        }
+        i = i + 1;
+    }
+    out = out + "]\n}\n";
+    return out;
+}
+
+pub fn render_matches_json(summary: FilterSummary) -> String {
+    let mut out: String = "{\n"
+        + "  \"total_lines\": " + summary.total_lines.to_string() + ",\n"
+        + "  \"matched_lines\": " + summary.matched_lines.to_string() + ",\n"
+        + "  \"matches\": [\n";
+
+    let n: Int = list_len(summary.results);
+    let mut i: Int = 0;
+    while i < n {
+        let m: FilterMatch = list_get(summary.results, i);
+        out = out + "    {\"line_num\": " + m.line_num.to_string() + ", \"line\": \"" + json_str_escape(m.line) + "\"}";
+        if i + 1 < n {
+            out = out + ",\n";
+        } else {
+            out = out + "\n";
+        }
+        i = i + 1;
+    }
+    out = out + "  ]\n}\n";
+    return out;
+}
+
+pub fn render_predicates_catalog_json() -> String {
+    let mut out: String = "{\n"
+        + "  \"operators\": [\n"
+        + "    {\"symbol\": \"==\", \"name\": \"equality\", \"desc\": \"String or numeric exact match\"},\n"
+        + "    {\"symbol\": \"!=\", \"name\": \"inequality\", \"desc\": \"String or numeric difference\"},\n"
+        + "    {\"symbol\": \"<\", \"name\": \"less_than\", \"desc\": \"Numeric or lexicographical less than\"},\n"
+        + "    {\"symbol\": \"<=\", \"name\": \"less_equal\", \"desc\": \"Numeric or lexicographical less or equal\"},\n"
+        + "    {\"symbol\": \">\", \"name\": \"greater_than\", \"desc\": \"Numeric or lexicographical greater than\"},\n"
+        + "    {\"symbol\": \">=\", \"name\": \"greater_equal\", \"desc\": \"Numeric or lexicographical greater or equal\"},\n"
+        + "    {\"symbol\": \"=~\", \"name\": \"match\", \"desc\": \"Substring or pattern match\"},\n"
+        + "    {\"symbol\": \"!~\", \"name\": \"not_match\", \"desc\": \"Inverted substring or pattern match\"},\n"
+        + "    {\"symbol\": \"contains\", \"name\": \"contains\", \"desc\": \"Substring containment test\"},\n"
+        + "    {\"symbol\": \"&& / and\", \"name\": \"and\", \"desc\": \"Logical conjunction\"},\n"
+        + "    {\"symbol\": \"|| / or\", \"name\": \"or\", \"desc\": \"Logical disjunction\"},\n"
+        + "    {\"symbol\": \"! / not\", \"name\": \"not\", \"desc\": \"Logical negation\"}\n"
+        + "  ],\n"
+        + "  \"fields\": [\n"
+        + "    {\"token\": \"$0\", \"desc\": \"Entire raw input line\"},\n"
+        + "    {\"token\": \"$1..$N\", \"desc\": \"1-based positional column tokens\"},\n"
+        + "    {\"token\": \"NR / line\", \"desc\": \"1-based input line number\"}\n"
+        + "  ]\n"
+        + "}\n";
+    return out;
+}
+
+pub fn render_ast_summary_json(ast: ExprAst) -> String {
+    let mut out: String = "{\n"
+        + "  \"valid\": " + (if ast.is_valid { "true" } else { "false" }) + ",\n"
+        + "  \"node_count\": " + list_len(ast.arena).to_string() + ",\n"
+        + "  \"root_idx\": " + ast.root_idx.to_string() + "\n"
+        + "}\n";
+    return out;
+}

@@ -1,0 +1,199 @@
+// # Predicate Evaluator
+//
+// Logline: Evaluates compiled AST nodes against field-delimited line contexts.
+//
+// Setup: Pure algorithmic evaluator using integer AST arena references and immutable field arrays.
+//
+// Beats:
+//   1. Resolve node values (literals, field tokens, line numbers).
+//   2. Perform relational comparisons (==, !=, <, <=, >, >=, =~, !~, contains).
+//   3. Compute boolean logic combinations (&&, ||, !).
+//   4. Deliver deterministic boolean match verdicts.
+
+import "core/predicate_token.oo";
+import "core/predicate_ast.oo";
+
+fn is_all_digits(s: String) -> Bool {
+    let n: Int = chars_len(s);
+    if n == 0 {
+        return false;
+    }
+    let mut i: Int = 0;
+    while i < n {
+        let b: Int = byte_at(s, i);
+        if b < 48 || b > 57 {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+fn parse_int(s: String) -> Int {
+    let n: Int = chars_len(s);
+    let mut val: Int = 0;
+    let mut i: Int = 0;
+    while i < n {
+        let b: Int = byte_at(s, i);
+        if b >= 48 && b <= 57 {
+            val = val * 10 + (b - 48);
+        }
+        i = i + 1;
+    }
+    return val;
+}
+
+fn str_contains(s: String, needle: String) -> Bool {
+    let n_len: Int = chars_len(needle);
+    let s_len: Int = chars_len(s);
+    if n_len > s_len {
+        return false;
+    }
+    let mut i: Int = 0;
+    while i + n_len <= s_len {
+        if str_slice(s, i, i + n_len) == needle {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn resolve_field(fields: List[String], idx: Int) -> String {
+    let n: Int = list_len(fields);
+    if idx >= 0 && idx < n {
+        return list_get(fields, idx);
+    }
+    return "";
+}
+
+pub fn eval_node_str(arena: List[ExprNode], idx: Int, fields: List[String], line_num: Int) -> String {
+    if idx < 0 || idx >= list_len(arena) {
+        return "";
+    }
+    let node: ExprNode = list_get(arena, idx);
+    if node.kind == node_str() {
+        return node.str_val;
+    }
+    if node.kind == node_field() {
+        return resolve_field(fields, node.field_idx);
+    }
+    if node.kind == node_num() {
+        return node.str_val;
+    }
+    if node.kind == node_nr() {
+        return line_num.to_string();
+    }
+    return "";
+}
+
+pub fn eval_node_int(arena: List[ExprNode], idx: Int, fields: List[String], line_num: Int) -> Int {
+    if idx < 0 || idx >= list_len(arena) {
+        return 0;
+    }
+    let node: ExprNode = list_get(arena, idx);
+    if node.kind == node_num() {
+        return node.num_val;
+    }
+    if node.kind == node_nr() {
+        return line_num;
+    }
+    if node.kind == node_field() {
+        let f: String = resolve_field(fields, node.field_idx);
+        return parse_int(f);
+    }
+    if node.kind == node_str() {
+        return parse_int(node.str_val);
+    }
+    return 0;
+}
+
+fn str_lex_cmp(a: String, b: String) -> Int {
+    let a_len: Int = chars_len(a);
+    let b_len: Int = chars_len(b);
+    let min_len: Int = if a_len < b_len { a_len } else { b_len };
+    let mut i: Int = 0;
+    while i < min_len {
+        let ba: Int = byte_at(a, i);
+        let bb: Int = byte_at(b, i);
+        if ba < bb { return -1; }
+        if ba > bb { return 1; }
+        i = i + 1;
+    }
+    if a_len < b_len { return -1; }
+    if a_len > b_len { return 1; }
+    return 0;
+}
+
+fn compare_nodes(op: Int, l_str: String, r_str: String) -> Bool {
+    let l_is_num: Bool = is_all_digits(l_str);
+    let r_is_num: Bool = is_all_digits(r_str);
+
+    if l_is_num && r_is_num {
+        let l_val: Int = parse_int(l_str);
+        let r_val: Int = parse_int(r_str);
+        if op == tok_eq() { return l_val == r_val; }
+        if op == tok_ne() { return l_val != r_val; }
+        if op == tok_lt() { return l_val < r_val; }
+        if op == tok_le() { return l_val <= r_val; }
+        if op == tok_gt() { return l_val > r_val; }
+        if op == tok_ge() { return l_val >= r_val; }
+    }
+
+    if op == tok_eq() { return l_str == r_str; }
+    if op == tok_ne() { return l_str != r_str; }
+    if op == tok_contains() || op == tok_match() { return str_contains(l_str, r_str); }
+    if op == tok_not_match() { return !str_contains(l_str, r_str); }
+    let cmp: Int = str_lex_cmp(l_str, r_str);
+    if op == tok_lt() { return cmp < 0; }
+    if op == tok_le() { return cmp <= 0; }
+    if op == tok_gt() { return cmp > 0; }
+    if op == tok_ge() { return cmp >= 0; }
+    return false;
+}
+
+pub fn eval_node_bool(arena: List[ExprNode], idx: Int, fields: List[String], line_num: Int) -> Bool {
+    if idx < 0 || idx >= list_len(arena) {
+        return true;
+    }
+    let node: ExprNode = list_get(arena, idx);
+    if node.kind == node_true() {
+        return true;
+    }
+    if node.kind == node_false() {
+        return false;
+    }
+    if node.kind == node_not() {
+        return !eval_node_bool(arena, node.left_idx, fields, line_num);
+    }
+    if node.kind == node_and() {
+        let l_res: Bool = eval_node_bool(arena, node.left_idx, fields, line_num);
+        if !l_res {
+            return false;
+        }
+        return eval_node_bool(arena, node.right_idx, fields, line_num);
+    }
+    if node.kind == node_or() {
+        let l_res: Bool = eval_node_bool(arena, node.left_idx, fields, line_num);
+        if l_res {
+            return true;
+        }
+        return eval_node_bool(arena, node.right_idx, fields, line_num);
+    }
+    if node.kind == node_cmp() {
+        let l_val: String = eval_node_str(arena, node.left_idx, fields, line_num);
+        let r_val: String = eval_node_str(arena, node.right_idx, fields, line_num);
+        return compare_nodes(node.op, l_val, r_val);
+    }
+    if node.kind == node_field() {
+        let f: String = resolve_field(fields, node.field_idx);
+        return chars_len(f) > 0;
+    }
+    if node.kind == node_str() {
+        return chars_len(node.str_val) > 0;
+    }
+    if node.kind == node_num() {
+        return node.num_val != 0;
+    }
+    return true;
+}

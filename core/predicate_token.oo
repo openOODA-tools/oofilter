@@ -1,0 +1,238 @@
+// # Predicate Lexer - Token Specification
+//
+// Logline: Tokenizes boolean predicate expressions into typed lexical tokens.
+//
+// Setup: Pure lexical scanner processing query strings without disk or network I/O.
+//
+// Beats:
+//   1. Scan whitespace, operators, and grouping punctuation.
+//   2. Extract field references ($0, $1, $2, NR).
+//   3. Extract quoted string literals and integer values.
+//   4. Emit linear token streams for AST parsing.
+
+pub type Token = struct {
+    kind: Int,
+    text: String,
+    num_val: Int
+};
+
+pub fn tok_eof() -> Int {
+    return 0;
+}
+
+pub fn tok_and() -> Int {
+    return 1;
+}
+
+pub fn tok_or() -> Int {
+    return 2;
+}
+
+pub fn tok_not() -> Int {
+    return 3;
+}
+
+pub fn tok_eq() -> Int {
+    return 4;
+}
+
+pub fn tok_ne() -> Int {
+    return 5;
+}
+
+pub fn tok_lt() -> Int {
+    return 6;
+}
+
+pub fn tok_le() -> Int {
+    return 7;
+}
+
+pub fn tok_gt() -> Int {
+    return 8;
+}
+
+pub fn tok_ge() -> Int {
+    return 9;
+}
+
+pub fn tok_match() -> Int {
+    return 10;
+}
+
+pub fn tok_not_match() -> Int {
+    return 11;
+}
+
+pub fn tok_contains() -> Int {
+    return 12;
+}
+
+pub fn tok_lparen() -> Int {
+    return 13;
+}
+
+pub fn tok_rparen() -> Int {
+    return 14;
+}
+
+pub fn tok_field() -> Int {
+    return 15;
+}
+
+pub fn tok_ident() -> Int {
+    return 16;
+}
+
+pub fn tok_string() -> Int {
+    return 17;
+}
+
+pub fn tok_number() -> Int {
+    return 18;
+}
+
+pub fn tok_nr() -> Int {
+    return 19;
+}
+
+pub fn make_token(kind: Int, text: String, num_val: Int) -> Token {
+    return Token {
+        kind: kind,
+        text: text,
+        num_val: num_val
+    };
+}
+
+fn is_space(b: Int) -> Bool {
+    return b == 32 || b == 9 || b == 10 || b == 13;
+}
+
+fn is_digit(b: Int) -> Bool {
+    return b >= 48 && b <= 57;
+}
+
+fn is_alpha(b: Int) -> Bool {
+    return (b >= 65 && b <= 90) || (b >= 97 && b <= 122) || b == 95;
+}
+
+fn parse_int_val(s: String) -> Int {
+    let n: Int = chars_len(s);
+    let mut val: Int = 0;
+    let mut i: Int = 0;
+    while i < n {
+        let b: Int = byte_at(s, i);
+        if is_digit(b) {
+            val = val * 10 + (b - 48);
+        }
+        i = i + 1;
+    }
+    return val;
+}
+
+pub fn tokenize_expression(src: String) -> List[Token] {
+    let mut tokens: List[Token] = list_new();
+    let n: Int = chars_len(src);
+    let mut i: Int = 0;
+
+    while i < n {
+        let b: Int = byte_at(src, i);
+        if is_space(b) {
+            i = i + 1;
+        } else if b == 40 {
+            tokens = list_push(tokens, make_token(tok_lparen(), "(", 0));
+            i = i + 1;
+        } else if b == 41 {
+            tokens = list_push(tokens, make_token(tok_rparen(), ")", 0));
+            i = i + 1;
+        } else if b == 38 && i + 1 < n && byte_at(src, i + 1) == 38 {
+            tokens = list_push(tokens, make_token(tok_and(), "&&", 0));
+            i = i + 2;
+        } else if b == 124 && i + 1 < n && byte_at(src, i + 1) == 124 {
+            tokens = list_push(tokens, make_token(tok_or(), "||", 0));
+            i = i + 2;
+        } else if b == 61 && i + 1 < n && byte_at(src, i + 1) == 61 {
+            tokens = list_push(tokens, make_token(tok_eq(), "==", 0));
+            i = i + 2;
+        } else if b == 61 && i + 1 < n && byte_at(src, i + 1) == 126 {
+            tokens = list_push(tokens, make_token(tok_match(), "=~", 0));
+            i = i + 2;
+        } else if b == 61 {
+            tokens = list_push(tokens, make_token(tok_eq(), "==", 0));
+            i = i + 1;
+        } else if b == 33 && i + 1 < n && byte_at(src, i + 1) == 61 {
+            tokens = list_push(tokens, make_token(tok_ne(), "!=", 0));
+            i = i + 2;
+        } else if b == 33 && i + 1 < n && byte_at(src, i + 1) == 126 {
+            tokens = list_push(tokens, make_token(tok_not_match(), "!~", 0));
+            i = i + 2;
+        } else if b == 33 {
+            tokens = list_push(tokens, make_token(tok_not(), "!", 0));
+            i = i + 1;
+        } else if b == 60 && i + 1 < n && byte_at(src, i + 1) == 61 {
+            tokens = list_push(tokens, make_token(tok_le(), "<=", 0));
+            i = i + 2;
+        } else if b == 60 {
+            tokens = list_push(tokens, make_token(tok_lt(), "<", 0));
+            i = i + 1;
+        } else if b == 62 && i + 1 < n && byte_at(src, i + 1) == 61 {
+            tokens = list_push(tokens, make_token(tok_ge(), ">=", 0));
+            i = i + 2;
+        } else if b == 62 {
+            tokens = list_push(tokens, make_token(tok_gt(), ">", 0));
+            i = i + 1;
+        } else if b == 36 {
+            let mut j: Int = i + 1;
+            while j < n && is_digit(byte_at(src, j)) {
+                j = j + 1;
+            }
+            let num_str: String = str_slice(src, i + 1, j);
+            let f_idx: Int = parse_int_val(num_str);
+            tokens = list_push(tokens, make_token(tok_field(), str_slice(src, i, j), f_idx));
+            i = j;
+        } else if b == 34 || b == 39 {
+            let quote: Int = b;
+            let mut j: Int = i + 1;
+            while j < n && byte_at(src, j) != quote {
+                j = j + 1;
+            }
+            let s_val: String = str_slice(src, i + 1, j);
+            tokens = list_push(tokens, make_token(tok_string(), s_val, 0));
+            i = if j < n { j + 1 } else { j };
+        } else if is_digit(b) {
+            let mut j: Int = i;
+            while j < n && is_digit(byte_at(src, j)) {
+                j = j + 1;
+            }
+            let num_str: String = str_slice(src, i, j);
+            let val: Int = parse_int_val(num_str);
+            tokens = list_push(tokens, make_token(tok_number(), num_str, val));
+            i = j;
+        } else if is_alpha(b) {
+            let mut j: Int = i;
+            while j < n && (is_alpha(byte_at(src, j)) || is_digit(byte_at(src, j))) {
+                j = j + 1;
+            }
+            let word: String = str_slice(src, i, j);
+            if word == "and" {
+                tokens = list_push(tokens, make_token(tok_and(), "and", 0));
+            } else if word == "or" {
+                tokens = list_push(tokens, make_token(tok_or(), "or", 0));
+            } else if word == "not" {
+                tokens = list_push(tokens, make_token(tok_not(), "not", 0));
+            } else if word == "contains" {
+                tokens = list_push(tokens, make_token(tok_contains(), "contains", 0));
+            } else if word == "NR" || word == "line" {
+                tokens = list_push(tokens, make_token(tok_nr(), word, 0));
+            } else {
+                tokens = list_push(tokens, make_token(tok_ident(), word, 0));
+            }
+            i = j;
+        } else {
+            i = i + 1;
+        }
+    }
+
+    tokens = list_push(tokens, make_token(tok_eof(), "", 0));
+    return tokens;
+}

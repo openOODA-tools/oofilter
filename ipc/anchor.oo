@@ -1,0 +1,107 @@
+// # IPC Subsystem Anchor
+//
+// Logline: Unit tests for JSON extraction, CLI options parsing, and MCP message dispatch.
+//
+// Setup: Pure verification of JSON parsing and protocol handling without socket or disk I/O.
+//
+// Beats:
+//   1. Verify JSON token scanning and field extraction.
+//   2. Verify CLI argument parsing for expression, delimiter, and count flags.
+//   3. Verify MCP message handler dispatching for initialize and tools list.
+
+import "ipc/json_field.oo";
+import "ipc/cli_options.oo";
+import "ipc/mcp_server.oo";
+
+fn str_contains(s: String, needle: String) -> Bool {
+    let n_len: Int = chars_len(needle);
+    let s_len: Int = chars_len(s);
+    if n_len > s_len {
+        return false;
+    }
+    let mut i: Int = 0;
+    while i + n_len <= s_len {
+        if str_slice(s, i, i + n_len) == needle {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn test_json_parsing() -> Bool {
+    let raw: String = "{\"expr\":\"$1 == 'prod'\",\"invert\":true,\"limit\":42}";
+    let e: String = json_extract_str_field(raw, "expr");
+    if e != "$1 == 'prod'" {
+        return false;
+    }
+    let inv: Bool = json_extract_bool_field(raw, "invert", false);
+    if !inv {
+        return false;
+    }
+    let lim: Int = json_extract_int_field(raw, "limit", 0);
+    if lim != 42 {
+        return false;
+    }
+    return true;
+}
+
+fn test_cli_parsing() -> Bool {
+    let mut args: List[String] = list_new();
+    args = list_push(args, "-e");
+    args = list_push(args, "$1 == \"test\"");
+    args = list_push(args, "-v");
+    args = list_push(args, "-c");
+    args = list_push(args, "sample.log");
+
+    let opts: FilterOpts = parse_cli_args(args);
+    if opts.expr != "$1 == \"test\"" {
+        return false;
+    }
+    if !opts.invert {
+        return false;
+    }
+    if !opts.count_only {
+        return false;
+    }
+    if list_len(opts.files) != 1 || list_get(opts.files, 0) != "sample.log" {
+        return false;
+    }
+    return true;
+}
+
+fn test_mcp_dispatch() -> Bool {
+    let init_res: String = render_mcp_init("1");
+    if !str_contains(init_res, "oofilter") || !str_contains(init_res, "0.2.0") {
+        return false;
+    }
+
+    let list_res: String = render_mcp_tools_list("2");
+    if !str_contains(list_res, "filter_evaluate") || !str_contains(list_res, "filter_stream") {
+        return false;
+    }
+    if !str_contains(list_res, "filter_compile_ast") || !str_contains(list_res, "filter_predicates") {
+        return false;
+    }
+
+    let req_eval: String = "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"name\":\"filter_evaluate\",\"line\":\"user 100 active\",\"expr\":\"$2 >= 100\"}";
+    let res_eval: String = handle_mcp_request(req_eval);
+    if !str_contains(res_eval, "matched") || !str_contains(res_eval, "true") {
+        return false;
+    }
+
+    return true;
+}
+
+pub fn run_ipc_tests() -> Bool {
+    if !test_json_parsing() {
+        return false;
+    }
+    if !test_cli_parsing() {
+        return false;
+    }
+    if !test_mcp_dispatch() {
+        return false;
+    }
+    return true;
+}

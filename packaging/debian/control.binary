@@ -1,12 +1,9 @@
-Source: oofilter
+Package: oofilter
+Version: 0.2.0-1
 Section: utils
 Priority: optional
-Maintainer: openOODA-tools <ops@openooda.org>
-Standards-Version: 4.6.2
-Build-Depends: debhelper-compat (= 13)
-
-Package: oofilter
 Architecture: amd64
+Maintainer: openOODA-tools <ops@openooda.org>
 Depends: libc6
 Description: Sovereign boolean logic evaluator and stream predicate filter
  Evaluates boolean logic expressions against structured stream line objects.

@@ -1,0 +1,80 @@
+// # Render Subsystem Anchor
+//
+// Logline: Unit tests for filter result formatting, line numbering, and JSON serialization.
+//
+// Setup: Pure verification of rendering output formats without filesystem or socket access.
+//
+// Beats:
+//   1. Verify line-numbered and plain stream output formatting.
+//   2. Verify count summary serialization.
+//   3. Verify JSON serialization of match records and operator schemas.
+//   4. Deliver unified render test execution status.
+
+import "core/stream_filter.oo";
+import "render/render_filter.oo";
+import "render/render_json.oo";
+
+fn str_contains(s: String, needle: String) -> Bool {
+    let n_len: Int = chars_len(needle);
+    let s_len: Int = chars_len(s);
+    if n_len > s_len {
+        return false;
+    }
+    let mut i: Int = 0;
+    while i + n_len <= s_len {
+        if str_slice(s, i, i + n_len) == needle {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn test_render_formatting() -> Bool {
+    let raw: String = "line1 alpha\nline2 beta\nline3 gamma\n";
+    let summary: FilterSummary = filter_stream_lines(raw, "$2 == \"beta\"", "", false);
+
+    let res_plain: String = render_filter_results(summary, false, false);
+    if !str_contains(res_plain, "line2 beta") {
+        return false;
+    }
+
+    let res_numbered: String = render_filter_results(summary, true, false);
+    if !str_contains(res_numbered, "2:line2 beta") {
+        return false;
+    }
+
+    let res_count: String = render_filter_results(summary, false, true);
+    if !str_contains(res_count, "1\n") {
+        return false;
+    }
+
+    return true;
+}
+
+fn test_json_rendering() -> Bool {
+    let raw: String = "admin 100\nuser 50\n";
+    let summary: FilterSummary = filter_stream_lines(raw, "$2 >= 100", "", false);
+
+    let json_summary: String = render_matches_json(summary);
+    if !str_contains(json_summary, "\"matched_lines\": 1") || !str_contains(json_summary, "admin 100") {
+        return false;
+    }
+
+    let catalog: String = render_predicates_catalog_json();
+    if !str_contains(catalog, "operators") || !str_contains(catalog, "contains") {
+        return false;
+    }
+
+    return true;
+}
+
+pub fn run_render_tests() -> Bool {
+    if !test_render_formatting() {
+        return false;
+    }
+    if !test_json_rendering() {
+        return false;
+    }
+    return true;
+}

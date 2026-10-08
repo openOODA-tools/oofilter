@@ -1,52 +1,148 @@
 // # oofilter Main Entry Point
 //
-// Logline: Evaluates boolean logic expressions against structured stream line objects.
+// Logline: Sovereign boolean logic evaluator, stream predicate filter, and MCP server.
 //
-// Setup: Demands explicit capability tokens and standard argument list.
+// Setup: Demands explicit capability tokens &FsReadCap, &ProcessCap, and &EnvCap under zero ambient authority.
 //
 // Beats:
-//   1. Parse command-line options and dispatch --help, --version, or --mcp.
-//   2. Execute capability-bounded oofilter operations.
-//   3. Format and output structured results to standard output.
+//   1. Parse command-line options and dispatch --help, --version, --test, or --mcp.
+//   2. Route synthetic showcase requests for --demo execution.
+//   3. Ingest streaming input from files or standard input.
+//   4. Evaluate boolean expressions and output filtered lines or structured JSON.
+
+import "core/stream_filter.oo";
+import "render/render_filter.oo";
+import "render/render_json.oo";
+import "ipc/cli_options.oo";
+import "ipc/mcp_server.oo";
+import "anchor.oo";
 
 fn render_help() -> String {
-    return "oofilter 0.1.0 (openOODA sovereign data & streaming)\n"
-        + "usage: oofilter [options] [ARGUMENTS]...\n\n"
+    return "oofilter 0.2.0 (openOODA sovereign data & streaming)\n"
+        + "usage: oofilter [options] [-e EXPR] [FILE...]\n\n"
         + "Evaluates boolean logic expressions against structured stream line objects.\n\n"
-        + "Options:\n"
-        + "  -h, --help           display this help and exit\n"
-        + "  -v, --version        output version information and exit\n"
-        + "      --json           output formatted as JSON Lines\n"
-        + "      --color <WHEN>   colorize output: auto, always, never [default: auto]\n"
-        + "      --theme <NAME>   override active oote palette\n"
-        + "      --mcp            run as Model Context Protocol stdio server\n";
+        + "POSIX Options:\n"
+        + "  -e, --expr EXPR       boolean predicate expression (e.g. '$1 == \"admin\" && $2 > 10')\n"
+        + "  -v, --invert-match    invert sense of matching (select non-matching lines)\n"
+        + "  -c, --count           output only a count of matching lines\n"
+        + "  -n, --line-number     prefix each output line with 1-based line number\n"
+        + "  -F, -d, --delimiter D field delimiter (default: whitespace)\n"
+        + "  -j, --json            output matching lines and fields as JSON Lines\n"
+        + "  -D, --demo            interactive multi-predicate stream filtering showcase\n"
+        + "      --test            execute internal subsystem verification suite\n"
+        + "      --mcp             run as Model Context Protocol JSON-RPC stdio server\n"
+        + "  -v, --version         output version information and exit\n"
+        + "      --help            display this help and exit\n";
 }
 
 fn render_version() -> String {
-    return "oofilter 0.1.0 (openOODA sovereign data & streaming)\n";
+    return "oofilter 0.2.0 (openOODA sovereign data & streaming)\n"
+        + "License: Apache License 2.0 (zero ambient authority)\n"
+        + "Architecture: x86_64 / aarch64 native binary\n";
 }
 
-fn main(args: List[String]) -> Int {
+pub fn main(
+    fr: &FsReadCap,
+    _pr: &ProcessCap,
+    _env: &EnvCap,
+    args: List[String]
+) -> Int {
     let num_args: Int = list_len(args);
     let mut i: Int = 0;
 
     while i < num_args {
         let arg: String = list_get(args, i);
-        if arg == "-h" || arg == "--help" {
+        if arg == "--help" {
             print(render_help());
             return 0;
         }
-        if arg == "-v" || arg == "--version" {
+        if arg == "--version" {
             print(render_version());
             return 0;
         }
+        if arg == "--test" {
+            if run_all_tests() {
+                print("oofilter: internal anchor tests PASSED\n");
+                return 0;
+            } else {
+                print("oofilter: internal anchor tests FAILED\n");
+                return 1;
+            }
+        }
         if arg == "--mcp" {
-            print("{\"jsonrpc\":\"2.0\",\"result\":{\"status\":\"ready\",\"tool\":\"oofilter\"}}\n");
+            run_mcp_server(fr);
+            return 0;
+        }
+        if arg == "-D" || arg == "--demo" {
+            print(render_demo_showcase());
             return 0;
         }
         i = i + 1;
     }
 
-    print("oofilter: sovereign capability-bounded utility ready\n");
-    return 0;
+    let opts: FilterOpts = parse_cli_args(args);
+
+    if opts.help {
+        print(render_help());
+        return 0;
+    }
+    if opts.version {
+        print(render_version());
+        return 0;
+    }
+    if opts.demo {
+        print(render_demo_showcase());
+        return 0;
+    }
+
+    let num_files: Int = list_len(opts.files);
+    let mut total_matches: Int = 0;
+
+    if num_files == 0 {
+        // Read from standard input
+        let mut stdin_buf: String = "";
+        let mut reading: Bool = true;
+        while reading {
+            let r: Result[String, String] = oo_read_stdin_chunk(fr, 65536);
+            if !r.is_ok() {
+                reading = false;
+            } else {
+                let chunk: String = match r { Ok(s) => s, Err(_) => "" };
+                if chars_len(chunk) == 0 {
+                    reading = false;
+                } else {
+                    stdin_buf = stdin_buf + chunk;
+                }
+            }
+        }
+        let summary: FilterSummary = filter_stream_lines(stdin_buf, opts.expr, opts.delimiter, opts.invert);
+        total_matches = summary.matched_lines;
+        if opts.json_mode {
+            print(render_matches_json(summary));
+        } else {
+            print(render_filter_results(summary, opts.line_number, opts.count_only));
+        }
+        return if total_matches > 0 || opts.count_only { 0 } else { 1 };
+    }
+
+    let mut f_idx: Int = 0;
+    while f_idx < num_files {
+        let file_path: String = list_get(opts.files, f_idx);
+        let r: Result[String, String] = read_file(fr, file_path);
+        if !r.is_ok() {
+            print("oofilter: " + file_path + ": No such file or directory\n");
+        } else {
+            let content: String = match r { Ok(s) => s, Err(_) => "" };
+            let summary: FilterSummary = filter_stream_lines(content, opts.expr, opts.delimiter, opts.invert);
+            total_matches = total_matches + summary.matched_lines;
+            if opts.json_mode {
+                print(render_matches_json(summary));
+            } else {
+                print(render_filter_results(summary, opts.line_number, opts.count_only));
+            }
+        }
+        f_idx = f_idx + 1;
+    }
+
+    return if total_matches > 0 || opts.count_only { 0 } else { 1 };
 }

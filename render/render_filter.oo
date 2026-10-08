@@ -1,0 +1,63 @@
+// # Render Filter Output
+//
+// Logline: Formats stream filter results for standard output, line numbering, and showcases.
+//
+// Setup: Pure string formatter rendering matched lines without filesystem or subprocess access.
+//
+// Beats:
+//   1. Format line-numbered and plain stream outputs.
+//   2. Format aggregate count summaries.
+//   3. Render interactive multi-predicate demo showcases.
+
+import "core/stream_filter.oo";
+
+pub fn render_filter_results(summary: FilterSummary, show_line_num: Bool, count_only: Bool) -> String {
+    if count_only {
+        return summary.matched_lines.to_string() + "\n";
+    }
+
+    let mut out: String = "";
+    let n: Int = list_len(summary.results);
+    let mut i: Int = 0;
+
+    while i < n {
+        let item: FilterMatch = list_get(summary.results, i);
+        if show_line_num {
+            out = out + item.line_num.to_string() + ":" + item.line + "\n";
+        } else {
+            out = out + item.line + "\n";
+        }
+        i = i + 1;
+    }
+
+    return out;
+}
+
+pub fn render_demo_showcase() -> String {
+    let mut out: String = "=== oofilter Sovereign Stream Predicate Showcase ===\n\n";
+
+    let sample_logs: String = "INFO auth user=admin status=200\n"
+        + "WARN disk dev=/dev/sda1 usage=91\n"
+        + "ERROR net remote=10.0.0.4 status=500\n"
+        + "INFO auth user=guest status=200\n"
+        + "ERROR auth user=intruder status=403\n";
+
+    out = out + "Input Stream:\n" + sample_logs + "\n";
+
+    // Query 1: $1 == "ERROR"
+    let q1: FilterSummary = filter_stream_lines(sample_logs, "$1 == \"ERROR\"", "", false);
+    out = out + "Predicate: $1 == \"ERROR\"\n";
+    out = out + render_filter_results(q1, true, false) + "\n";
+
+    // Query 2: $1 == "INFO" && $4 == "status=200"
+    let q2: FilterSummary = filter_stream_lines(sample_logs, "$1 == \"INFO\" && $4 == \"status=200\"", "", false);
+    out = out + "Predicate: $1 == \"INFO\" && $4 == \"status=200\"\n";
+    out = out + render_filter_results(q2, true, false) + "\n";
+
+    // Query 3: Inverted match: !($1 == "INFO")
+    let q3: FilterSummary = filter_stream_lines(sample_logs, "$1 == \"INFO\"", "", true);
+    out = out + "Predicate (Inverted): !($1 == \"INFO\")\n";
+    out = out + render_filter_results(q3, true, false) + "\n";
+
+    return out;
+}

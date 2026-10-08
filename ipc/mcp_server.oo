@@ -1,0 +1,154 @@
+// # MCP Server Subsystem
+//
+// Logline: Implements JSON-RPC 2.0 Model Context Protocol stdio server for AI agents.
+//
+// Setup: Pure IPC message parser dispatching streaming filter tools across stdin/stdout.
+//
+// Beats:
+//   1. Handle protocol handshake (initialize) and advertise tools/list.
+//   2. Dispatch tool calls: filter_evaluate, filter_stream, filter_compile_ast.
+//   3. Dispatch catalog and showcase tools: filter_predicates, filter_demo.
+//   4. Emit formatted JSON-RPC 2.0 responses.
+
+import "core/predicate_token.oo";
+import "core/predicate_ast.oo";
+import "core/stream_filter.oo";
+import "render/render_filter.oo";
+import "render/render_json.oo";
+import "ipc/json_field.oo";
+
+fn json_escape(s: String) -> String {
+    let n: Int = chars_len(s);
+    let mut out: String = "";
+    let mut i: Int = 0;
+    while i < n {
+        let b: Int = byte_at(s, i);
+        if b == 34 { out = out + "\\\""; }
+        else if b == 92 { out = out + "\\\\"; }
+        else if b == 10 { out = out + "\\n"; }
+        else if b == 9 { out = out + "\\t"; }
+        else if b == 13 { out = out + "\\r"; }
+        else { out = out + char_at(s, i); }
+        i = i + 1;
+    }
+    return out;
+}
+
+pub fn render_mcp_init(id_str: String) -> String {
+    return "{\"jsonrpc\":\"2.0\",\"id\":" + id_str + ",\"result\":{"
+        + "\"protocolVersion\":\"2024-11-05\","
+        + "\"capabilities\":{\"tools\":{}},"
+        + "\"serverInfo\":{\"name\":\"oofilter\",\"version\":\"0.2.0\"}"
+        + "}}\n";
+}
+
+pub fn render_mcp_tools_list(id_str: String) -> String {
+    return "{\"jsonrpc\":\"2.0\",\"id\":" + id_str + ",\"result\":{\"tools\":["
+        + "{\"name\":\"filter_evaluate\",\"description\":\"Evaluates boolean predicate against a single line context.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"line\":{\"type\":\"string\"},\"expr\":{\"type\":\"string\"},\"delimiter\":{\"type\":\"string\"}},\"required\":[\"line\",\"expr\"]}},"
+        + "{\"name\":\"filter_stream\",\"description\":\"Filters streaming text records matching a boolean expression.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":\"string\"},\"expr\":{\"type\":\"string\"},\"delimiter\":{\"type\":\"string\"},\"invert\":{\"type\":\"boolean\"},\"json_mode\":{\"type\":\"boolean\"}},\"required\":[\"text\",\"expr\"]}},"
+        + "{\"name\":\"filter_compile_ast\",\"description\":\"Parses and compiles a predicate expression into an AST summary.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"expr\":{\"type\":\"string\"}},\"required\":[\"expr\"]}},"
+        + "{\"name\":\"filter_predicates\",\"description\":\"Lists supported operators, syntax rules, and field selectors.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{}}},"
+        + "{\"name\":\"filter_demo\",\"description\":\"Runs interactive multi-predicate stream filtering showcase.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{}}}"
+        + "]}}\n";
+}
+
+fn render_tool_result(id_str: String, text: String) -> String {
+    return "{\"jsonrpc\":\"2.0\",\"id\":" + id_str + ",\"result\":{\"content\":[{\"type\":\"text\",\"text\":\""
+        + json_escape(text) + "\"}]}}\n";
+}
+
+pub fn handle_mcp_request(raw_line: String) -> String {
+    let id_val: Int = json_extract_int_field(raw_line, "id", 1);
+    let id_str: String = id_val.to_string();
+    let method: String = json_extract_str_field(raw_line, "method");
+
+    if method == "initialize" {
+        return render_mcp_init(id_str);
+    }
+    if method == "notifications/initialized" {
+        return "";
+    }
+    if method == "tools/list" {
+        return render_mcp_tools_list(id_str);
+    }
+    if method == "tools/call" {
+        let tool_name: String = json_extract_str_field(raw_line, "name");
+
+        if tool_name == "filter_evaluate" {
+            let line: String = json_extract_str_field(raw_line, "line");
+            let expr: String = json_extract_str_field(raw_line, "expr");
+            let delim: String = json_extract_str_field(raw_line, "delimiter");
+            let m: FilterMatch = evaluate_single_line(line, expr, delim);
+            return render_tool_result(id_str, render_match_single_json(m));
+        }
+        if tool_name == "filter_stream" {
+            let text: String = json_extract_str_field(raw_line, "text");
+            let expr: String = json_extract_str_field(raw_line, "expr");
+            let delim: String = json_extract_str_field(raw_line, "delimiter");
+            let invert: Bool = json_extract_bool_field(raw_line, "invert", false);
+            let json_m: Bool = json_extract_bool_field(raw_line, "json_mode", false);
+            let summary: FilterSummary = filter_stream_lines(text, expr, delim, invert);
+            let payload: String = if json_m { render_matches_json(summary) } else { render_filter_results(summary, false, false) };
+            return render_tool_result(id_str, payload);
+        }
+        if tool_name == "filter_compile_ast" {
+            let expr: String = json_extract_str_field(raw_line, "expr");
+            let tokens: List[Token] = tokenize_expression(expr);
+            let ast: ExprAst = parse_expression_tokens(tokens);
+            return render_tool_result(id_str, render_ast_summary_json(ast));
+        }
+        if tool_name == "filter_predicates" {
+            return render_tool_result(id_str, render_predicates_catalog_json());
+        }
+        if tool_name == "filter_demo" {
+            return render_tool_result(id_str, render_demo_showcase());
+        }
+
+        return "{\"jsonrpc\":\"2.0\",\"id\":" + id_str + ",\"error\":{\"code\":-32601,\"message\":\"Unknown tool: " + json_escape(tool_name) + "\"}}\n";
+    }
+
+    return "{\"jsonrpc\":\"2.0\",\"id\":" + id_str + ",\"error\":{\"code\":-32601,\"message\":\"Method not found: " + json_escape(method) + "\"}}\n";
+}
+
+fn find_newline_pos(s: String) -> Int {
+    let n: Int = chars_len(s);
+    let mut i: Int = 0;
+    while i < n {
+        if byte_at(s, i) == 10 {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+pub fn run_mcp_server(fr: &FsReadCap) {
+    let mut buf: String = "";
+    let mut running: Bool = true;
+    while running {
+        let r: Result[String, String] = oo_read_stdin_chunk(fr, 4096);
+        if !r.is_ok() {
+            running = false;
+        } else {
+            let chunk: String = match r { Ok(s) => s, Err(_) => "" };
+            if chars_len(chunk) == 0 {
+                running = false;
+            } else {
+                buf = buf + chunk;
+                let mut nl_pos: Int = find_newline_pos(buf);
+                while nl_pos >= 0 {
+                    let line: String = str_slice(buf, 0, nl_pos);
+                    buf = str_slice(buf, nl_pos + 1, chars_len(buf));
+                    let trimmed: String = str_trim(line);
+                    if chars_len(trimmed) > 0 {
+                        let resp: String = handle_mcp_request(trimmed);
+                        if chars_len(resp) > 0 {
+                            print(resp);
+                        }
+                    }
+                    nl_pos = find_newline_pos(buf);
+                }
+            }
+        }
+    }
+}

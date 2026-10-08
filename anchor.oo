@@ -1,13 +1,32 @@
-// # oofilter Root Anchor
+// # oofilter Root Subsystem Anchor
 //
-// Logline: Top-level anchor re-exporting options, core logic, render, and ipc subsystems.
+// Logline: Top-level anchor aggregating unit test suites for core, render, and ipc subsystems.
 //
-// Setup: Pure shim re-exporting all oofilter subsystem anchors.
+// Setup: Pure test harness verifying all internal invariants before release packaging.
 //
 // Beats:
-//   1. Re-export options parsing subsystem.
-//   2. Re-export core oofilter execution engine.
-//   3. Re-export render formatting subsystem.
-//   4. Re-export Model Context Protocol (MCP) IPC subsystem.
+//   1. Execute core predicate lexing, parsing, and stream filtering unit tests.
+//   2. Execute render formatting and JSON serialization tests.
+//   3. Execute IPC JSON-RPC parsing and CLI dispatching tests.
+//   4. Report unified success or failure status.
 
-import "main.oo";
+import "core/anchor.oo";
+import "render/anchor.oo";
+import "ipc/anchor.oo";
+
+pub fn run_all_tests() -> Bool {
+    if !run_core_tests() {
+        print("FAIL: core subsystem tests failed\n");
+        return false;
+    }
+    if !run_render_tests() {
+        print("FAIL: render subsystem tests failed\n");
+        return false;
+    }
+    if !run_ipc_tests() {
+        print("FAIL: ipc subsystem tests failed\n");
+        return false;
+    }
+    print("ALL oofilter internal anchor tests PASSED\n");
+    return true;
+}

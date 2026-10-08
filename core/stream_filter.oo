@@ -1,0 +1,158 @@
+// # Stream Filter Engine
+//
+// Logline: Applies compiled predicate ASTs across streaming line buffers and delimited fields.
+//
+// Setup: Pure text stream partitioner executing in-memory filtering without ambient authority.
+//
+// Beats:
+//   1. Partition input stream into newline-delimited line records.
+//   2. Extract field tokens according to whitespace or custom delimiters.
+//   3. Evaluate boolean AST predicates against each line context.
+//   4. Collate matching records into structured filter summaries.
+
+import "core/predicate_token.oo";
+import "core/predicate_ast.oo";
+import "core/predicate_eval.oo";
+
+pub type FilterMatch = struct {
+    line: String,
+    line_num: Int,
+    fields: List[String],
+    matched: Bool
+};
+
+pub type FilterSummary = struct {
+    total_lines: Int,
+    matched_lines: Int,
+    results: List[FilterMatch]
+};
+
+pub fn split_stream_lines(s: String) -> List[String] {
+    let mut lines: List[String] = list_new();
+    let n: Int = chars_len(s);
+    if n == 0 {
+        return lines;
+    }
+
+    let mut start: Int = 0;
+    let mut i: Int = 0;
+    while i < n {
+        let b: Int = byte_at(s, i);
+        if b == 10 { // newline \n
+            let mut end: Int = i;
+            if end > start && byte_at(s, end - 1) == 13 { // \r
+                end = end - 1;
+            }
+            lines = list_push(lines, str_slice(s, start, end));
+            start = i + 1;
+        } else if b == 92 && i + 1 < n && byte_at(s, i + 1) == 110 { // "\n" escape
+            lines = list_push(lines, str_slice(s, start, i));
+            i = i + 1;
+            start = i + 1;
+        }
+        i = i + 1;
+    }
+
+    if start < n {
+        lines = list_push(lines, str_slice(s, start, n));
+    }
+    return lines;
+}
+
+fn is_delim_space(b: Int) -> Bool {
+    return b == 32 || b == 9;
+}
+
+pub fn extract_line_fields(line: String, delim: String) -> List[String] {
+    let mut fields: List[String] = list_new();
+    fields = list_push(fields, line); // $0 is full line
+
+    let n: Int = chars_len(line);
+    let d_len: Int = chars_len(delim);
+
+    if d_len == 0 {
+        // default: whitespace split
+        let mut i: Int = 0;
+        while i < n {
+            while i < n && is_delim_space(byte_at(line, i)) {
+                i = i + 1;
+            }
+            if i >= n {
+                break;
+            }
+            let start: Int = i;
+            while i < n && !is_delim_space(byte_at(line, i)) {
+                i = i + 1;
+            }
+            fields = list_push(fields, str_slice(line, start, i));
+        }
+    } else {
+        // custom delimiter split
+        let mut start: Int = 0;
+        let mut i: Int = 0;
+        while i + d_len <= n {
+            if str_slice(line, i, i + d_len) == delim {
+                fields = list_push(fields, str_slice(line, start, i));
+                start = i + d_len;
+                i = start;
+            } else {
+                i = i + 1;
+            }
+        }
+        if start <= n {
+            fields = list_push(fields, str_slice(line, start, n));
+        }
+    }
+
+    return fields;
+}
+
+pub fn evaluate_single_line(line: String, expr_str: String, delim: String) -> FilterMatch {
+    let tokens: List[Token] = tokenize_expression(expr_str);
+    let ast: ExprAst = parse_expression_tokens(tokens);
+    let fields: List[String] = extract_line_fields(line, delim);
+    let matched: Bool = eval_node_bool(ast.arena, ast.root_idx, fields, 1);
+
+    return FilterMatch {
+        line: line,
+        line_num: 1,
+        fields: fields,
+        matched: matched
+    };
+}
+
+pub fn filter_stream_lines(content: String, expr_str: String, delim: String, invert: Bool) -> FilterSummary {
+    let tokens: List[Token] = tokenize_expression(expr_str);
+    let ast: ExprAst = parse_expression_tokens(tokens);
+    let raw_lines: List[String] = split_stream_lines(content);
+    let n_lines: Int = list_len(raw_lines);
+
+    let mut matches: List[FilterMatch] = list_new();
+    let mut match_count: Int = 0;
+    let mut i: Int = 0;
+
+    while i < n_lines {
+        let line_num: Int = i + 1;
+        let line: String = list_get(raw_lines, i);
+        let fields: List[String] = extract_line_fields(line, delim);
+        let raw_matched: Bool = eval_node_bool(ast.arena, ast.root_idx, fields, line_num);
+        let is_match: Bool = if invert { !raw_matched } else { raw_matched };
+
+        if is_match {
+            match_count = match_count + 1;
+            matches = list_push(matches, FilterMatch {
+                line: line,
+                line_num: line_num,
+                fields: fields,
+                matched: true
+            });
+        }
+        i = i + 1;
+    }
+
+    return FilterSummary {
+        total_lines: n_lines,
+        matched_lines: match_count,
+        results: matches
+    };
+}

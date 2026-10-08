@@ -1,0 +1,96 @@
+// # CLI Options Parser
+//
+// Logline: Parses command-line arguments and configuration flags for oofilter execution.
+//
+// Setup: Pure argument vector processor extracting expressions, flags, and file lists.
+//
+// Beats:
+//   1. Declare FilterOpts configuration structure.
+//   2. Parse POSIX flags (-e, -v, -c, -n, -F, -d, -j, -D).
+//   3. Parse lifecycle and protocol switches (--test, --mcp, --help, --version).
+//   4. Deliver structured options bundle.
+
+pub type FilterOpts = struct {
+    expr: String,
+    invert: Bool,
+    count_only: Bool,
+    line_number: Bool,
+    delimiter: String,
+    json_mode: Bool,
+    demo: Bool,
+    test_mode: Bool,
+    mcp_mode: Bool,
+    help: Bool,
+    version: Bool,
+    files: List[String]
+};
+
+pub fn parse_cli_args(args: List[String]) -> FilterOpts {
+    let mut expr: String = "";
+    let mut invert: Bool = false;
+    let mut count_only: Bool = false;
+    let mut line_number: Bool = false;
+    let mut delimiter: String = "";
+    let mut json_mode: Bool = false;
+    let mut demo: Bool = false;
+    let mut test_mode: Bool = false;
+    let mut mcp_mode: Bool = false;
+    let mut help: Bool = false;
+    let mut version: Bool = false;
+    let mut files: List[String] = list_new();
+
+    let n: Int = list_len(args);
+    let mut i: Int = 0;
+
+    while i < n {
+        let arg: String = list_get(args, i);
+
+        if arg == "-h" || arg == "--help" {
+            help = true;
+        } else if arg == "-v" || arg == "--invert-match" {
+            invert = true;
+        } else if arg == "--version" {
+            version = true;
+        } else if arg == "-c" || arg == "--count" {
+            count_only = true;
+        } else if arg == "-n" || arg == "--line-number" {
+            line_number = true;
+        } else if arg == "-j" || arg == "--json" {
+            json_mode = true;
+        } else if arg == "-D" || arg == "--demo" {
+            demo = true;
+        } else if arg == "--test" {
+            test_mode = true;
+        } else if arg == "--mcp" {
+            mcp_mode = true;
+        } else if (arg == "-e" || arg == "--expr") && i + 1 < n {
+            i = i + 1;
+            expr = list_get(args, i);
+        } else if (arg == "-F" || arg == "-d" || arg == "--delimiter") && i + 1 < n {
+            i = i + 1;
+            delimiter = list_get(args, i);
+        } else if chars_len(arg) > 0 && byte_at(arg, 0) != 45 { // not starting with '-'
+            if expr == "" {
+                expr = arg;
+            } else {
+                files = list_push(files, arg);
+            }
+        }
+        i = i + 1;
+    }
+
+    return FilterOpts {
+        expr: expr,
+        invert: invert,
+        count_only: count_only,
+        line_number: line_number,
+        delimiter: delimiter,
+        json_mode: json_mode,
+        demo: demo,
+        test_mode: test_mode,
+        mcp_mode: mcp_mode,
+        help: help,
+        version: version,
+        files: files
+    };
+}

@@ -1,0 +1,127 @@
+// # Core Subsystem Anchor
+//
+// Logline: Unit test suite for predicate lexing, AST construction, evaluation, and stream filtering.
+//
+// Setup: Pure algorithmic verification of boolean logic engine using synthetic in-memory buffers.
+//
+// Beats:
+//   1. Verify tokenization of field tokens, operators, and string literals.
+//   2. Verify AST tree structure and operator precedence.
+//   3. Verify evaluation of relational comparisons and logic gates.
+//   4. Verify multiline stream filtering and delimiter splitting.
+
+import "core/predicate_token.oo";
+import "core/predicate_ast.oo";
+import "core/predicate_eval.oo";
+import "core/stream_filter.oo";
+
+fn test_lexer() -> Bool {
+    let expr: String = "$1 == \"admin\" && $2 > 100 || !($3 contains \"error\")";
+    let tokens: List[Token] = tokenize_expression(expr);
+    let n: Int = list_len(tokens);
+    if n < 8 {
+        return false;
+    }
+    let t0: Token = list_get(tokens, 0);
+    if t0.kind != tok_field() || t0.num_val != 1 {
+        return false;
+    }
+    let t1: Token = list_get(tokens, 1);
+    if t1.kind != tok_eq() {
+        return false;
+    }
+    return true;
+}
+
+fn test_eval_comparisons() -> Bool {
+    let mut fields: List[String] = list_new();
+    fields = list_push(fields, "admin 42 active"); // $0
+    fields = list_push(fields, "admin");           // $1
+    fields = list_push(fields, "42");              // $2
+    fields = list_push(fields, "active");          // $3
+
+    // Test 1: $1 == "admin"
+    let ast1: ExprAst = parse_expression_tokens(tokenize_expression("$1 == \"admin\""));
+    if !eval_node_bool(ast1.arena, ast1.root_idx, fields, 1) {
+        return false;
+    }
+
+    // Test 2: $2 > 40
+    let ast2: ExprAst = parse_expression_tokens(tokenize_expression("$2 > 40"));
+    if !eval_node_bool(ast2.arena, ast2.root_idx, fields, 1) {
+        return false;
+    }
+
+    // Test 3: $2 < 10 (should be false)
+    let ast3: ExprAst = parse_expression_tokens(tokenize_expression("$2 < 10"));
+    if eval_node_bool(ast3.arena, ast3.root_idx, fields, 1) {
+        return false;
+    }
+
+    // Test 4: $3 contains "act"
+    let ast4: ExprAst = parse_expression_tokens(tokenize_expression("$3 contains \"act\""));
+    if !eval_node_bool(ast4.arena, ast4.root_idx, fields, 1) {
+        return false;
+    }
+
+    // Test 5: Logic compound: $1 == "admin" && $2 > 40 && $3 != "disabled"
+    let ast5: ExprAst = parse_expression_tokens(tokenize_expression("$1 == \"admin\" && $2 > 40 && $3 != \"disabled\""));
+    if !eval_node_bool(ast5.arena, ast5.root_idx, fields, 1) {
+        return false;
+    }
+
+    // Test 6: Inverted logic: !($1 == "guest")
+    let ast6: ExprAst = parse_expression_tokens(tokenize_expression("!($1 == \"guest\")"));
+    if !eval_node_bool(ast6.arena, ast6.root_idx, fields, 1) {
+        return false;
+    }
+
+    return true;
+}
+
+fn test_stream_filter() -> Bool {
+    let stream: String = "alice 25 engineering\n"
+        + "bob 45 management\n"
+        + "carol 32 engineering\n"
+        + "david 19 intern\n";
+
+    // Filter engineers
+    let res1: FilterSummary = filter_stream_lines(stream, "$3 == \"engineering\"", "", false);
+    if res1.total_lines != 4 || res1.matched_lines != 2 {
+        return false;
+    }
+
+    // Filter age > 30
+    let res2: FilterSummary = filter_stream_lines(stream, "$2 > 30", "", false);
+    if res2.matched_lines != 2 {
+        return false;
+    }
+
+    // Invert filter: NOT management
+    let res3: FilterSummary = filter_stream_lines(stream, "$3 == \"management\"", "", true);
+    if res3.matched_lines != 3 {
+        return false;
+    }
+
+    // Comma-delimited test
+    let csv_stream: String = "101,prod,green\n102,stage,yellow\n103,prod,red\n";
+    let res4: FilterSummary = filter_stream_lines(csv_stream, "$2 == \"prod\" && $3 == \"green\"", ",", false);
+    if res4.matched_lines != 1 {
+        return false;
+    }
+
+    return true;
+}
+
+pub fn run_core_tests() -> Bool {
+    if !test_lexer() {
+        return false;
+    }
+    if !test_eval_comparisons() {
+        return false;
+    }
+    if !test_stream_filter() {
+        return false;
+    }
+    return true;
+}
